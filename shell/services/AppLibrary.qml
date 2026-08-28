@@ -82,7 +82,9 @@ Item {
     // inherit wayland-wm@.service. Keeping gtk-launch as the desktop-entry
     // resolver supports IDs with spaces and entries that UWSM rejects.
     // Keep the .desktop suffix or ids like org.telegram.desktop won't resolve.
-    Util.execDetached("uwsm-app -- gtk-launch " + Util.shellQuote(id + ".desktop"))
+    // uwsm-app is Arch-side; installs without uwsm fall back to plain
+    // gtk-launch so desktop entries still open.
+    Util.execDetached("command -v uwsm-app >/dev/null 2>&1 && uwsm-app -- gtk-launch " + Util.shellQuote(id + ".desktop") + " || gtk-launch " + Util.shellQuote(id + ".desktop"))
   }
 
   function remove(desktopId, name) {

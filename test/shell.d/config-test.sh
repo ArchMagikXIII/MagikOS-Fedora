@@ -130,6 +130,7 @@ package_defaults = [
   ("default/uwsm/env.d/10-magikos", "/usr/share/uwsm/env.d/10-magikos", "uwsm/env"),
   ("default/uwsm/default", None, "uwsm/default"),
   ("default/environment.d/10-magikos-fcitx.conf", "/usr/lib/environment.d/10-magikos-fcitx.conf", "environment.d/fcitx.conf"),
+  ("default/environment.d/10-magikos.conf", "/usr/lib/environment.d/10-magikos.conf", "environment.d/magikos.conf"),
   ("default/fontconfig/conf.avail/50-magikos.conf", "/usr/share/fontconfig/conf.avail/50-magikos.conf", "fontconfig/fonts.conf"),
   ("default/applications/mimeapps.list", "/usr/share/applications/mimeapps.list", "mimeapps.list"),
   ("etc/fastfetch/config.jsonc", "/etc/fastfetch/config.jsonc", "fastfetch/config.jsonc"),

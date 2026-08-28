@@ -53,14 +53,25 @@ relock_session() {
   return 1
 }
 
-# Each kill stops the oldest matching instance and only returns once it has
-# fully exited, so the no-duplicate launch below can't race a dying shell.
-# Requires our quickshell-git build; 0.3.0's kill returns immediately.
+# Each kill stops the oldest matching instance. Stock quickshell releases
+# return from kill before the process has fully exited, so drain the kill
+# queue first, then wait out any surviving processes ourselves: the
+# no-duplicate launch below must not race a dying shell.
 while timeout 5 quickshell kill -p "$CONFIG_DIR" --any-display >/dev/null 2>&1; do :; done
+
+survivor_deadline=$((SECONDS + 5))
+while (( SECONDS < survivor_deadline )) && pgrep -x quickshell >/dev/null 2>&1; do
+  sleep 0.05
+done
+if pgrep -x quickshell >/dev/null 2>&1; then
+  echo "Quickshell instances are still shutting down; launching the replacement anyway." >&2
+fi
 
 # Spawn from the compositor so the shell inherits the canonical session environment,
 # not transient variables from a terminal, SSH connection, or development tool.
-swaymsg exec magikos-launch-shell >/dev/null 2>&1
+# Sway's own MAGIKOS_PATH copy goes stale after a dev link or unlink without a
+# re-login, so hand the freshly resolved session tree to the launcher explicitly.
+swaymsg exec "env MAGIKOS_PATH='$session_magikos_path' magikos-launch-shell" >/dev/null 2>&1
 
 for (( attempt = 0; attempt < 20; attempt++ )); do
   if MAGIKOS_PATH="$session_magikos_path" MAGIKOS_SHELL_IPC_TIMEOUT=0.5s magikos-shell shell ping >/dev/null 2>&1; then

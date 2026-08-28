@@ -59,6 +59,26 @@ ipc_timeout=${MAGIKOS_SHELL_IPC_TIMEOUT:-2s}
 output=$(timeout --kill-after=1s "$ipc_timeout" qs ipc -n -p "$MAGIKOS_PATH/shell" call -- "$@" 2>/dev/null)
 ipc_status=$?
 
+# A stale session environment (a dev link or unlink without re-login) can aim
+# MAGIKOS_PATH at a tree whose shell is not running while another Magikos shell
+# instance is live. Retarget whichever instance actually answers so commands,
+# keybindings, and menus keep working across that drift. A hung declared shell
+# still fails below: an unresponsive shell must not be silently bypassed.
+if (( ipc_status != 0 && ipc_status != 124 && ipc_status != 137 )); then
+  fallback_tree=""
+  while IFS= read -r candidate; do
+    [[ -z $candidate || $candidate == $MAGIKOS_PATH ]] && continue
+    fallback_tree=$candidate
+    if [[ $candidate == /usr/share/magikos ]]; then
+      break
+    fi
+  done <<< "$(qs list --all 2>/dev/null | sed -n 's/^ *Config path: \(.*\)\/shell\/shell\.qml$/\1/p')"
+  if [[ -n $fallback_tree ]]; then
+    output=$(timeout --kill-after=1s "$ipc_timeout" qs ipc -n -p "$fallback_tree/shell" call -- "$@" 2>/dev/null)
+    ipc_status=$?
+  fi
+fi
+
 if (( ipc_status == 124 || ipc_status == 137 )); then
   fail "magikos-shell is not responding"
 elif (( ipc_status != 0 )); then

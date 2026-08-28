@@ -70,8 +70,10 @@ pass "shell IPC targets the newest live Quickshell instance"
 restart_root="$test_tmp/restart-root"
 restart_bin="$restart_root/bin"
 restart_state="$test_tmp/restart-pids"
+restart_procs="$test_tmp/restart-procs"
 restart_log="$test_tmp/restart.log"
 restart_env_log="$test_tmp/restart-env.log"
+restart_race_log="$test_tmp/restart-race.log"
 dispatch_log="$test_tmp/dispatch.log"
 ipc_log="$test_tmp/ipc.log"
 runtime_dir="$test_tmp/runtime"
@@ -80,12 +82,13 @@ touch "$restart_root/shell/shell.qml"
 ln -s "$ROOT/bin/magikos-shell" "$restart_bin/magikos-shell"
 ln -s "$ROOT/bin/magikos-launch-shell" "$restart_bin/magikos-launch-shell"
 ln -s "$ROOT/bin/magikos-cmd-missing" "$restart_bin/magikos-cmd-missing"
-
 # The recovery path checks for any surviving Quickshell before deciding to
 # re-lock, and the development session may be running one outside the sandbox.
+# The stub mirrors live processes through a file the fake Quickshell maintains.
 cat >"$restart_bin/pgrep" <<'SH'
 #!/bin/bash
-exit 1
+
+[[ -s $MAGIKOS_TEST_QS_PROCS ]]
 SH
 
 cat >"$restart_bin/qs" <<'SH'
@@ -127,13 +130,23 @@ case " $* " in
     pid=$(head -n 1 "$MAGIKOS_TEST_QS_STATE")
     [[ $pid =~ ^[0-9]+$ ]] || exit 1
     kill "$pid" 2>/dev/null
-    while kill -0 "$pid" 2>/dev/null; do sleep 0.01; done
-    awk 'NR > 1' "$MAGIKOS_TEST_QS_STATE" >"$MAGIKOS_TEST_QS_STATE.next"
+    # Repo builds answer before the process has fully exited: drop the pid
+    # from the live-process list on a delay so the restart script has to
+    # wait out survivors itself before launching the replacement.
+    awk -v p="$pid" '$0 != p' "$MAGIKOS_TEST_QS_STATE" >"$MAGIKOS_TEST_QS_STATE.next"
     mv "$MAGIKOS_TEST_QS_STATE.next" "$MAGIKOS_TEST_QS_STATE"
+    (
+      sleep 0.3
+      awk -v p="$pid" '$0 != p' "$MAGIKOS_TEST_QS_PROCS" >"$MAGIKOS_TEST_QS_PROCS.next"
+      mv "$MAGIKOS_TEST_QS_PROCS.next" "$MAGIKOS_TEST_QS_PROCS"
+    ) &
+    disown
     ;;
   *' -n -p '*)
+    [[ -s $MAGIKOS_TEST_QS_PROCS ]] && printf 'launched over a survivor\n' >"$MAGIKOS_TEST_QS_RACE_LOG"
     printf '%s\n' "${MAGIKOS_TEST_TRANSIENT_ENV-unset}" >"$MAGIKOS_TEST_QS_ENV_LOG"
     printf '303\n' >"$MAGIKOS_TEST_QS_STATE"
+    printf '303\n' >"$MAGIKOS_TEST_QS_PROCS"
     ;;
 esac
 SH
@@ -178,6 +191,7 @@ restart_pid_one=$!
 sleep 30 &
 restart_pid_two=$!
 printf '%s\n%s\n' "$restart_pid_one" "$restart_pid_two" >"$restart_state"
+printf '%s\n%s\n' "$restart_pid_one" "$restart_pid_two" >"$restart_procs"
 
 caller_root="$test_tmp/caller-root"
 mkdir -p "$caller_root/shell"
@@ -187,6 +201,8 @@ PATH="$restart_bin:$PATH" \
 MAGIKOS_PATH="$caller_root" \
 XDG_RUNTIME_DIR="$runtime_dir" \
 MAGIKOS_TEST_QS_STATE="$restart_state" \
+MAGIKOS_TEST_QS_PROCS="$restart_procs" \
+MAGIKOS_TEST_QS_RACE_LOG="$restart_race_log" \
 MAGIKOS_TEST_QS_LOG="$restart_log" \
 MAGIKOS_TEST_QS_ENV_LOG="$restart_env_log" \
 MAGIKOS_TEST_DISPATCH_LOG="$dispatch_log" \
@@ -207,9 +223,12 @@ restart_pid_two=""
 [[ $(<"$restart_state") == 303 ]] || fail "restart leaves exactly one fresh shell instance"
 [[ $(grep -c '^-n -p ' "$restart_log") == 1 ]] || fail "restart launches one fresh shell process"
 grep -F "kill -p $restart_root/shell --any-display" "$restart_log" >/dev/null || fail "restart stops the shell from the session checkout"
-grep -F 'exec magikos-launch-shell' "$dispatch_log" >/dev/null || fail "restart launches the fresh shell through Sway"
+grep -F "exec env MAGIKOS_PATH='$restart_root' magikos-launch-shell" "$dispatch_log" >/dev/null ||
+  fail "restart launches the fresh shell from the session checkout through Sway" "$(cat "$dispatch_log")"
 grep -F "ipc -n -p $restart_root/shell call -- shell ping" "$ipc_log" >/dev/null || fail "restart checks readiness in the session checkout"
 pass "restart replaces duplicate shell instances from the session checkout"
+[[ ! -e $restart_race_log ]] || fail "restart launches over a shell that has not fully exited" "$(cat "$restart_race_log")"
+pass "restart waits for dying shells before launching the replacement"
 
 : >"$restart_log"
 printf '303\n' >"$restart_state"
@@ -219,6 +238,8 @@ locked_error=$(PATH="$restart_bin:$PATH" \
   MAGIKOS_PATH="$restart_root" \
   XDG_RUNTIME_DIR="$runtime_dir" \
   MAGIKOS_TEST_QS_STATE="$restart_state" \
+  MAGIKOS_TEST_QS_PROCS="$restart_procs" \
+  MAGIKOS_TEST_QS_RACE_LOG="$restart_race_log" \
   MAGIKOS_TEST_QS_LOG="$restart_log" \
   MAGIKOS_TEST_DISPATCH_LOG="$dispatch_log" \
   MAGIKOS_TEST_IPC_LOG="$ipc_log" \
@@ -236,19 +257,22 @@ pass "restart preserves the shell while its lock is active"
 sleep 30 &
 restart_pid_one=$!
 printf '%s\n' "$restart_pid_one" >"$restart_state"
+: >"$restart_procs"
 rm -f "$restart_state.locked"
 : >"$restart_log"
 : >"$ipc_log"
 
 PATH="$restart_bin:$PATH" \
-MAGIKOS_PATH="$restart_root" \
-XDG_RUNTIME_DIR="$runtime_dir" \
-MAGIKOS_TEST_QS_STATE="$restart_state" \
-MAGIKOS_TEST_QS_LOG="$restart_log" \
-MAGIKOS_TEST_QS_ENV_LOG="$restart_env_log" \
-MAGIKOS_TEST_DISPATCH_LOG="$dispatch_log" \
-MAGIKOS_TEST_IPC_LOG="$ipc_log" \
-MAGIKOS_TEST_SESSION_PATH="$restart_root" \
+  MAGIKOS_PATH="$restart_root" \
+  XDG_RUNTIME_DIR="$runtime_dir" \
+  MAGIKOS_TEST_QS_STATE="$restart_state" \
+  MAGIKOS_TEST_QS_PROCS="$restart_procs" \
+  MAGIKOS_TEST_QS_RACE_LOG="$restart_race_log" \
+  MAGIKOS_TEST_QS_LOG="$restart_log" \
+  MAGIKOS_TEST_QS_ENV_LOG="$restart_env_log" \
+  MAGIKOS_TEST_DISPATCH_LOG="$dispatch_log" \
+  MAGIKOS_TEST_IPC_LOG="$ipc_log" \
+  MAGIKOS_TEST_SESSION_PATH="$restart_root" \
   timeout 5 "$ROOT/bin/magikos-restart-shell" || fail "locked restart recovers when the lock client is dead"
 
 if kill -0 "$restart_pid_one" 2>/dev/null; then
