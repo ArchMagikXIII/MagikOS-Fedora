@@ -10,4 +10,9 @@ source magikos-restart-gum
 cmd="$*"
 presentation_script="magikos-show-logo; $cmd; if (( \$? != 130 )); then magikos-show-done; fi"
 
-exec setsid uwsm-app -- xdg-terminal-exec --app-id=org.magikos.terminal --title=Magikos -- bash -c "$presentation_script"
+# uwsm-app is Arch-side; installs without uwsm run the terminal directly.
+if command -v uwsm-app >/dev/null 2>&1; then
+  exec setsid uwsm-app -- xdg-terminal-exec --app-id=org.magikos.terminal --title=Magikos -- bash -c "$presentation_script"
+else
+  exec setsid xdg-terminal-exec --app-id=org.magikos.terminal --title=Magikos -- bash -c "$presentation_script"
+fi
