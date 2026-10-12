@@ -1,0 +1,8 @@
+[font]
+base-size = 18
+font-family = "JetBrainsMono Nerd Font"
+
+[bar]
+size-horizontal = 34
+scale-with-font = true
+icon-font = 20
