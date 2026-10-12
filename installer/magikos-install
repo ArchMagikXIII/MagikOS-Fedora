@@ -136,13 +136,12 @@ declare -A DNF_MAP
 QUICKSHELL_COPR_REPO=$(cat <<'REPO'
 [errornointernet-quickshell]
 name=Copr repo for quickshell owned by errornointernet
-baseurl=https://download.copr.fedorainfracloud.org/results/errornointernet/quickshell/fedora-$releasever/
+baseurl=https://download.copr.fedorainfracloud.org/results/errornointernet/quickshell/fedora-44-x86_64/
 type=rpm-md
-skip_if_unavailable=True
-repo_gpgcheck=0
-enabled=1
-enabled_metadata=1
+skip_if_unavailable=False
+repo_gpgcheck=1
 gpgcheck=1
+enabled=1
 gpgkey=https://download.copr.fedorainfracloud.org/results/errornointernet/quickshell/pubkey.gpg
 REPO
 )
